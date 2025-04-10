@@ -15,7 +15,6 @@ accuracy of momentum-space integration. See the HCubature package documentation
 for details.
 """
 function energy_per_site_lswt_correction(swt::SpinWaveTheory; kT=0.0, opts...)
-    println("TEST")
     any(in(keys(opts)), (:rtol, :atol, :maxevals)) || error("Must specify one of `rtol`, `atol`, or `maxevals` to control momentum-space integration.")
 
     (; sys) = swt
@@ -59,7 +58,6 @@ function _integrate_lswt_energy_correction_qspace(swt::SpinWaveTheory; kT::Real=
 end
 
 # Calculates the magnetization reduction for :SUN mode for all atoms
-# Calculates the magnetization reduction for :SUN mode for all atoms
 function magnetization_lswt_correction_sun(swt::SpinWaveTheory; kT::Real = 0.0, opts...)
     (; sys, data) = swt
 
@@ -96,13 +94,15 @@ function magnetization_lswt_correction_sun(swt::SpinWaveTheory; kT::Real = 0.0, 
         end
     else
         q -> begin
+            
             swt_hamiltonian_SUN!(H, swt, q)
             ωs = bogoliubov!(V, H)
             #@show minimum(ωs), maximum(ωs)
             out = zeros(Natoms)
             for (b, band) in enumerate(L+1:2L)
                 v = reshape(view(V, :, band), N-1, Natoms, 2)
-                ω = ωs[b]  # positive eigenvalue
+                #ω = ωs[b]  # positive eigenvalue
+                ω = ωs[band - L]  # positive ω
                 n_th = 1 / (exp(ω / kT) - 1)
                 #@show ω, n_th
                 factor = 1 + 2 * n_th
@@ -121,29 +121,41 @@ end
 
 
 # Calculates the magnetization reduction for :dipole mode for every site
-# Calculates the magnetization reduction for :dipole mode for every site
 function magnetization_lswt_correction_dipole(swt::SpinWaveTheory; kT::Real = 0.0, opts...)
     L = nbands(swt)
+    Natoms = Sunny.natoms(swt.sys.crystal)
+    N = 2#swt.sys.Ns[1]  # For dipole mode, N should be 2, Ns is used to keep track of S for renorms
     H = zeros(ComplexF64, 2L, 2L)
-    V = zeros(ComplexF64, 2L, 2L)
+    V = similar(H)
 
     integrand = if kT == 0
         q -> begin
             swt_hamiltonian_dipole!(H, swt, Vec3(q))
             bogoliubov!(V, H)
-            return SVector{L}(-norm2(view(V, L + i, 1:L)) for i in 1:L)
+            out = zeros(Natoms)
+            for band in L+1:2L
+                v = reshape(view(V, :, band), N-1, Natoms, 2)
+                for i in 1:Natoms
+                    out[i] -= real(conj(v[1, i, 1]) * v[1, i, 1])
+                end
+            end
+            return SVector{Natoms}(out)
         end
     else
         q -> begin
             swt_hamiltonian_dipole!(H, swt, Vec3(q))
             ωs = bogoliubov!(V, H)
-            #@show minimum(ωs), maximum(ωs)
-            ntuple(i -> begin
-                ω = ωs[i]  # ← positive eigenvalues only for populations
+            out = zeros(Natoms)
+            for (b, band) in enumerate(L+1:2L)
+                v = reshape(view(V, :, band), N-1, Natoms, 2)
+                ω = ωs[b]
                 n_th = 1 / (exp(ω / kT) - 1)
-                # Expectation of b†b is n_th, and total correction is - (1 + 2n_th) * ||v||
-                - (1 + 2 * n_th) * norm2(view(V, L + i, 1:L))
-            end, L) |> SVector{L}
+                factor = 1 + 2 * n_th
+                for i in 1:Natoms
+                    out[i] -= factor * real(conj(v[1, i, 1]) * v[1, i, 1])
+                end
+            end
+            return SVector{Natoms}(out)
         end
     end
 

@@ -348,3 +348,58 @@ function intensities_bands(sswt::SpinWaveTheorySpiral, qpts; kT=0) # TODO: branc
     intensity_flat = reshape(intensity_flat, 3L, size(qpts.qs)...)
     return BandIntensities(cryst, qpts, disp_flat, intensity_flat)
 end
+
+
+function energy_per_site_lswt_correction(sswt::SpinWaveTheorySpiral; opts...)
+    any(in(keys(opts)), (:rtol, :atol, :maxevals)) || error("Must specify one of `rtol`, `atol`, or `maxevals` to control momentum-space integration.")
+
+    (; swt, k, axis) = sswt
+    (; sys, data) = swt
+    Natoms = Sunny.natoms(sys.crystal)
+    L = Sunny.nbands(swt)
+    H = zeros(ComplexF64, 2L, 2L)
+    V = zeros(ComplexF64, 2L, 2L)
+
+    # Uniform correction at q = 0, branch 2 is the "center" one without k offset
+    Sunny.swt_hamiltonian_dipole_spiral!(H, sswt, sswt.k; branch=2)
+    #Sunny.swt_hamiltonian_dipole_spiral!(H, sswt, sswt.k; branch=1)
+    δE₁ = -real(Sunny.tr(view(H, 1:L, 1:L))) / (2 * Natoms)
+
+    # Integrate zero-point energy over 3 spiral branches (q-k, q, q+k)
+    δE₂ = Sunny.hcubature((0,0,0), (1,1,1); opts...) do q_reshaped
+        total = 0.0
+        #for branch in 1:3
+        for branch in [2]
+            Sunny.swt_hamiltonian_dipole_spiral!(H, sswt, q_reshaped; branch)
+            ωs = Sunny.bogoliubov!(V, H)
+            total += sum(view(ωs, 1:L))
+        end
+        return total / (2 * Natoms * 1)  # normalize over atoms and branches
+    end
+
+    return δE₁ + δE₂[1]
+end
+
+function magnetization_lswt_correction_dipole(sswt::SpinWaveTheorySpiral; opts...)
+    println("debug")
+    L = Sunny.nbands(sswt.swt)
+    H = zeros(ComplexF64, 2L, 2L)
+    V = zeros(ComplexF64, 2L, 2L)
+
+    δS = Sunny.hcubature((0,0,0), (1,1,1); opts...) do q
+        reduction = zeros(Float64, L)
+        #for branch in 1:3
+        for branch in [2]
+            Sunny.swt_hamiltonian_dipole_spiral!(H, sswt, Sunny.Vec3(q); branch)
+            Sunny.bogoliubov!(V, H)
+            for i in 1:L
+                # Each site's correction is norm² of lower half of Bogoliubov vector
+                reduction[i] += Sunny.norm2(view(V, L+i, 1:L))
+            end
+        end
+        #return Sunny.SVector{L}(-reduction[i] / 3 for i in 1:L)  # average over branches
+        return Sunny.SVector{L}(-reduction[i] / 1 for i in 1:L)  # average over branches
+    end
+
+    return δS[1]  # discard error bars
+end
