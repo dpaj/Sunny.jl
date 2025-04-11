@@ -287,6 +287,7 @@ function energy_per_site_lswt_correction(swt::EntangledSpinWaveTheory; kT=0.0, o
 
     # The uniform correction at q=0 to the classical energy (trace of the
     # (1,1)-block of the spin-wave Hamiltonian)
+    # I THINK THIS IS WRONG, FOR ENTANGLED, THERE CAN BE Q-dep OF ON-SITE
     dynamical_matrix!(H, swt, zero(Vec3))
     δE₁ = -real(tr(view(H, 1:L, 1:L))) / 2Natoms
 
@@ -318,6 +319,82 @@ function _integrate_lswt_energy_correction_qspace(swt::EntangledSpinWaveTheory; 
         end
     end |> first  # discard estimated error bar
 end
+
+function magnetization_lswt_correction(swt::EntangledSpinWaveTheory; kT::Real = 0.0, opts...)
+    any(in(keys(opts)), (:rtol, :atol, :maxevals)) || 
+        error("Must specify one of `rtol`, `atol`, or `maxevals` to control momentum-space integration.")
+
+    sys = swt.crystal_origin  # corrected from swt.sys to swt.crystal_origin
+    contraction_info = swt.contraction_info
+    sys_origin = swt.crystal_origin  # reuse for clarity
+
+    N = prod(swt.Ns_unit[1])
+
+    Natoms = natoms(sys_origin)
+
+    # Construct n·S operator in original space (one for each atom)
+    spin_ops = spin_matrices_of_dim(; N)
+    angular_obs = Observable[]
+
+    for i in 1:Natoms
+        n = normalize(sys_origin.dipoles[i])  # local quantization axis
+        O = n[1] * spin_ops[1] + n[2] * spin_ops[2] + n[3] * spin_ops[3]
+        push!(angular_obs, Observable(O))
+    end
+
+    # Lift into entangled product space
+    observables, source_idcs = observables_to_product_space(angular_obs, sys_origin, contraction_info)
+
+    # Allocate
+    L = nbands(swt)
+    H = zeros(ComplexF64, 2L, 2L)
+    V = zeros(ComplexF64, 2L, 2L)
+
+    integrand = if kT == 0
+        q -> begin
+            swt_hamiltonian!(H, swt, q)
+            bogoliubov!(V, H)
+
+            out = zeros(Natoms)
+            for band in L+1:2L
+                v = reshape(view(V, :, band), :, Natoms, 2)
+                for i in 1:Natoms
+                    O = observables[i].matrix
+                    for α in 1:size(O,1), β in 1:size(O,2)
+                        out[i] -= real((O[end,end] * δ(α, β) - O[α, β]) * conj(v[α, i, 1]) * v[β, i, 1])
+                    end
+                end
+            end
+            return SVector{Natoms}(out)
+        end
+    else
+        q -> begin
+            swt_hamiltonian!(H, swt, q)
+            ωs = bogoliubov!(V, H)
+
+            out = zeros(Natoms)
+            for (b, band) in enumerate(L+1:2L)
+                v = reshape(view(V, :, band), :, Natoms, 2)
+                ω = ωs[band - L]
+                n_th = 1 / (exp(ω / kT) - 1)
+                factor = 1 + 2 * n_th
+
+                for i in 1:Natoms
+                    O = observables[i].matrix
+                    for α in 1:size(O,1), β in 1:size(O,2)
+                        out[i] -= factor * real((O[end,end] * δ(α, β) - O[α, β]) * conj(v[α, i, 1]) * v[β, i, 1])
+                    end
+                end
+            end
+            return SVector{Natoms}(out)
+        end
+    end
+
+    δS, _ = hcubature(integrand, (0, 0, 0), (1, 1, 1); opts...)
+    return δS
+end
+
+
 
 # Only change is no Ewald
 function swt_hamiltonian_SUN!(H::Matrix{ComplexF64}, swt::EntangledSpinWaveTheory, q_reshaped::Vec3)

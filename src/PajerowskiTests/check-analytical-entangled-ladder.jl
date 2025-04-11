@@ -150,7 +150,7 @@ println("sunny entangled correction = $(Sunny.energy_per_site_lswt_correction(es
 #println("sunny unentangled correction = $(Sunny.energy_per_site_lswt_correction(swt; kT = kT, atol = 1e-4))")
 
 
-
+Sunny.magnetization_lswt_correction(eswt; atol = 1e-4)
 
 Natoms = Sunny.natoms(eswt.sys.crystal)
 L = Sunny.nbands(eswt)
