@@ -32,7 +32,7 @@ function energy_per_site_lswt_correction(swt::SpinWaveTheory; kT=0.0, opts...)
     δE₂ = _integrate_lswt_energy_correction_qspace(swt; kT, opts...)
 
     # Error bars in δE₂[2] are discarded
-    println(δE₂)
+    @show δE₁, δE₂
     return δE₁ + δE₂
 end
 

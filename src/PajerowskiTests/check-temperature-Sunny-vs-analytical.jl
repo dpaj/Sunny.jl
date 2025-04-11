@@ -13,7 +13,7 @@ units = Units(:meV, :angstrom)
 # Parameters
 S = 1.0           # Spin
 J = 1.0           # Exchange
-D = -1e-5         # Anisotropy
+D = -1e-3         # Anisotropy
 
 function δS_SL_AFM(mode, kT)
     a = 1
@@ -22,8 +22,6 @@ function δS_SL_AFM(mode, kT)
     sys = System(cryst, [1 => Moment(s=S, g=2)], mode;dims=(2, 2, 1))
     set_exchange!(sys, J, Bond(1, 1, [1, 0, 0]))
     set_onsite_coupling!(sys, S -> D*S[3]^2, 1)
-    randomize_spins!(sys)
-    minimize_energy!(sys)
     set_dipole!(sys, (0, 0, +1), position_to_site(sys, (0, 0, 0)))
     set_dipole!(sys, (0, 0, -1), position_to_site(sys, (1, 0, 0)))
     set_dipole!(sys, (0, 0, -1), position_to_site(sys, (0, 1, 0)))
@@ -41,22 +39,20 @@ function δE_SL_AFM(mode, kT)
     sys = System(cryst, [1 => Moment(s=S, g=2)], mode;dims=(2, 2, 1))
     set_exchange!(sys, J, Bond(1, 1, [1, 0, 0]))
     set_onsite_coupling!(sys, S -> D*S[3]^2, 1)
-    randomize_spins!(sys)
-    minimize_energy!(sys)
     set_dipole!(sys, (0, 0, +1), position_to_site(sys, (0, 0, 0)))
     set_dipole!(sys, (0, 0, -1), position_to_site(sys, (1, 0, 0)))
     set_dipole!(sys, (0, 0, -1), position_to_site(sys, (0, 1, 0)))
     set_dipole!(sys, (0, 0, +1), position_to_site(sys, (1, 1, 0)))
     swt = SpinWaveTheory(sys; measure=nothing)
-    δS = Sunny.energy_per_site_lswt_correction(swt; kT=kT, atol=1e-4)
-    return δS
+    δE = Sunny.energy_per_site_lswt_correction(swt; kT=kT, atol=1e-4)
+    return δE
 end
 
 
 function analytical_δS_integrand(qx, qy, kT)
     eps = 0
     D_c = D * (1-1/2S)
-    ω = (4 * J * S + abs(D_c)) * (sqrt(1 - (J*cos(qx) + J*cos(qy))^2/(2*J+abs(D_c))^2) + eps)
+    ω = (4 * J * S + 2 * S * abs(D_c)) * (sqrt(1 - (J*cos(qx) + J*cos(qy))^2/(2*J+abs(D_c))^2) + eps)
     nk = kT ≈ 0.0 ? 0.0 : 1 / (exp(ω / kT) - 1)
     return (nk + 0.5) / (sqrt(1 - (J*cos(qx) + J*cos(qy))^2/(2*J+abs(D_c))^2) + eps)
 end
@@ -70,7 +66,8 @@ end
 function analytical_δE_integrand(qx, qy, kT)
     eps = 0.0
     D_c = D * (1 - 1 / (2S))
-    A = 4 * J * S + abs(D_c)
+    A = 4 * J * S + 2 * S * abs(D_c)
+    #A = 4 * J * S + abs(D_c)
     B = (J * cos(qx) + J * cos(qy)) / (2J + abs(D_c))
     ω = A * (sqrt(1 - B^2) + eps)
 
@@ -84,7 +81,8 @@ function analytical_δE(kT)
 
     # Normal ordering correction
     D_c = D * (1 - 1 / (2S))
-    A = 2J*S + D_c*S
+    #A = 2J*S + D_c*S
+    A = 2 * J * S + 1 * S * abs(D_c)
     δE₁ = -A  # energy per site
 
     return δE₁ + δE₂
@@ -150,6 +148,7 @@ lines!(ax2, Ts_K, δE_analytical, label = "Analytical", color = :blue)
 scatter!(ax2, Ts_K, δE_Sunny_dipole, label = "Sunny :dipole", color = :red, marker = :circle)
 scatter!(ax2, Ts_K, δE_Sunny_SUN, label = "Sunny :SUN", color = :green, marker = :utriangle)
 hlines!(ax2, [-0.334], linestyle = :dash, color = :black, label = "Huse (T = 0)")
+#−0.658JS^2
 
 axislegend(ax2, position = :rb)
 

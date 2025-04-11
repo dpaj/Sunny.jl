@@ -276,7 +276,7 @@ function dispersion(swt::EntangledSpinWaveTheory, qpts)
 end
 
 # No changes
-function energy_per_site_lswt_correction(swt::EntangledSpinWaveTheory; opts...)
+function energy_per_site_lswt_correction(swt::EntangledSpinWaveTheory; kT=0.0, opts...)
     any(in(keys(opts)), (:rtol, :atol, :maxevals)) || error("Must specify one of `rtol`, `atol`, or `maxevals` to control momentum-space integration.")
 
     (; sys) = swt
@@ -285,21 +285,38 @@ function energy_per_site_lswt_correction(swt::EntangledSpinWaveTheory; opts...)
     H = zeros(ComplexF64, 2L, 2L)
     V = zeros(ComplexF64, 2L, 2L)
 
-    # The uniform correction to the classical energy (trace of the (1,1)-block
-    # of the spin-wave Hamiltonian)
+    # The uniform correction at q=0 to the classical energy (trace of the
+    # (1,1)-block of the spin-wave Hamiltonian)
     dynamical_matrix!(H, swt, zero(Vec3))
     δE₁ = -real(tr(view(H, 1:L, 1:L))) / 2Natoms
 
-    # Integrate zero-point energy over the first Brillouin zone 𝐪 ∈ [0, 1]³ for
-    # magnetic cell in reshaped RLU
-    δE₂ = hcubature((0,0,0), (1,1,1); opts...) do q_reshaped
-        dynamical_matrix!(H, swt, q_reshaped)
-        ωs = bogoliubov!(V, H)
-        return sum(view(ωs, 1:L)) / 2Natoms
-    end
+    # Quantum or thermal correction from dispersion
+    δE₂ = _integrate_lswt_energy_correction_qspace(swt; kT, opts...)
 
     # Error bars in δE₂[2] are discarded
-    return δE₁ + δE₂[1]
+    @show δE₁, δE₂
+    return δE₁ + δE₂
+end
+
+# Internal helper for Brillouin-zone integration of LSWT energy correction
+function _integrate_lswt_energy_correction_qspace(swt::EntangledSpinWaveTheory; kT::Real=0.0, opts...)
+    (; sys) = swt
+    Natoms = natoms(sys.crystal)
+    L = nbands(swt)
+    H = zeros(ComplexF64, 2L, 2L)
+    V = zeros(ComplexF64, 2L, 2L)
+
+    # Integrate zero-point energy over the first Brillouin zone 𝐪 ∈ [0, 1]³ for
+    # magnetic cell in reshaped RLU
+    return hcubature((0, 0, 0), (1, 1, 1); opts...) do q_reshaped
+        dynamical_matrix!(H, swt, q_reshaped)
+        ωs = bogoliubov!(V, H)
+        if kT == 0
+            return sum(view(ωs, 1:L)) / 2Natoms
+        else
+            return sum(ω -> (0.5 + 1 / (exp(ω / kT) - 1)) * ω, view(ωs, 1:L)) / Natoms
+        end
+    end |> first  # discard estimated error bar
 end
 
 # Only change is no Ewald
